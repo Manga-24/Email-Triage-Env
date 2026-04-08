@@ -1,0 +1,75 @@
+name: email-triage-env
+version: "1.0.0"
+description: >
+  A real-world RL environment where an agent triages a queue of emails
+  by classifying each one (urgent / important / normal / spam) and
+  assigning a priority (1–5). Rewards are given at every step based
+  on label accuracy, priority accuracy, and reasoning quality.
+author: ""
+tags:
+  - openenv
+  - email
+  - triage
+  - nlp
+  - real-world
+  - productivity
+
+tasks:
+  - id: easy
+    description: "5 clearly distinct emails. Spam is obvious, urgent is explicit."
+    difficulty: easy
+    min_steps: 5
+    max_steps: 5
+
+  - id: medium
+    description: "7 emails requiring careful context reading to distinguish urgency."
+    difficulty: medium
+    min_steps: 7
+    max_steps: 7
+
+  - id: hard
+    description: "10 emails with subtle cues, ambiguous senders, and mixed signals."
+    difficulty: hard
+    min_steps: 10
+    max_steps: 10
+
+action_space:
+  type: object
+  fields:
+    email_id: string
+    label:
+      type: enum
+      values: [urgent, important, normal, spam]
+    priority:
+      type: integer
+      min: 1
+      max: 5
+    reason: string
+
+observation_space:
+  type: object
+  fields:
+    email_id: string
+    subject: string
+    sender: string
+    body: string
+    timestamp: string
+    remaining_emails: integer
+    current_score: float
+    message: string
+
+reward:
+  type: float
+  range: [-0.1, 1.0]
+  description: >
+    Per-step reward = 0.6 * label_score + 0.3 * priority_score + 0.1 * reason_score.
+    Label accuracy is weighted most. Penalty of -0.1 for invalid actions.
+
+endpoints:
+  reset: POST /reset?task_id=<easy|medium|hard>
+  step:  POST /step?task_id=<easy|medium|hard>
+  state: GET  /state?task_id=<easy|medium|hard>
+  web:   GET  /web
+
+docker_image: ""
+hf_space: ""
