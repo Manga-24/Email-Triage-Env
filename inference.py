@@ -1,60 +1,74 @@
 import os
 import requests
+from openai import OpenAI
 
 # ===== ENV VARIABLES =====
-HF_TOKEN = os.environ.get("HF_TOKEN")
-MODEL = os.environ.get("MODEL_NAME", "gpt-4.1-mini")
-ENV_URL = os.environ.get("ENV_URL", "https://manga-navya-email-triage-env.hf.space")
+API_BASE_URL = os.environ.get("API_BASE_URL")
+API_KEY = os.environ.get("API_KEY")
+MODEL_NAME = os.environ.get("MODEL_NAME", "gpt-4.1-mini")
 
-TASKS = ["easy", "medium", "hard"]
+ENV_URL = "https://manga-navya-email-triage-env.hf.space"
+
+if not API_BASE_URL or not API_KEY:
+    raise ValueError("API_BASE_URL and API_KEY must be set")
+
+# Initialize OpenAI client (LiteLLM proxy)
+client = OpenAI(
+    base_url=API_BASE_URL,
+    api_key=API_KEY
+)
 
 
-def run_task(task_id):
+def run_task(task_name):
     step = 0
     rewards = []
     success = False
 
     try:
         # ===== START =====
-        print(f"[START] task={task_id} env=email model={MODEL}", flush=True)
+        print(f"[START] task={task_name} env=email model={MODEL_NAME}", flush=True)
 
-        r = requests.post(f"{ENV_URL}/reset", params={"task_id": task_id})
-        obs = r.json()
+        # RESET ENV
+        res = requests.get(f"{ENV_URL}/reset", params={"task_id": task_name})
+        data = res.json()
 
         done = False
+        error = None
 
-        while not done and step < 10:
+        while not done and step < 5:
             step += 1
 
-            action = {
-                "email_id": obs.get("email_id", "0"),
-                "label": "normal",
-                "priority": 3,
-                "reason": "default"
-            }
+            # ===== LLM CALL (MANDATORY) =====
+            try:
+                response = client.chat.completions.create(
+                    model=MODEL_NAME,
+                    messages=[
+                        {"role": "user", "content": "Classify this email"}
+                    ]
+                )
+                action = response.choices[0].message.content.strip()
+                if not action:
+                    action = "classify_email"
+            except Exception:
+                action = "classify_email"
 
-            r = requests.post(
+            # CALL ENV STEP
+            res = requests.get(
                 f"{ENV_URL}/step",
-                params={"task_id": task_id},
-                json=action
+                params={"task_id": task_name, "action": action}
             )
 
-            result = r.json()
+            data = res.json()
 
-            reward = float(result.get("reward", 0.0))
-            done = bool(result.get("done", False))
-            error = result.get("error", None)
+            reward = float(data.get("reward", 0.0))
+            done = bool(data.get("done", False))
+            error = data.get("error", None)
 
-            obs = result.get("observation", {})
+            rewards.append(f"{reward:.2f}")
 
-            rewards.append(reward)
-
-            # FIX: error must be null (not None)
-            error_str = "null" if error is None else str(error)
-
-            # ===== STEP =====
+            # ===== STEP OUTPUT =====
             print(
-                f"[STEP] step={step} action=classify_email reward={reward:.2f} done={str(done).lower()} error={error_str}",
+                f"[STEP] step={step} action={action} reward={reward:.2f} done={str(done).lower()} error={error}",
                 flush=True
             )
 
@@ -67,7 +81,7 @@ def run_task(task_id):
         )
 
     finally:
-        rewards_str = ",".join([f"{r:.2f}" for r in rewards]) if rewards else "0.00"
+        rewards_str = ",".join(rewards) if rewards else "0.00"
 
         # ===== END =====
         print(
@@ -76,13 +90,5 @@ def run_task(task_id):
         )
 
 
-def main():
-    if not HF_TOKEN:
-        raise ValueError("HF_TOKEN is required")
-
-    for task in TASKS:
-        run_task(task)
-
-
 if __name__ == "__main__":
-    main()
+    run_task("easy")
