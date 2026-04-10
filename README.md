@@ -1,3 +1,12 @@
+---
+title: Email Triage Environment
+emoji: 📧
+colorFrom: blue
+colorTo: green
+sdk: docker
+app_file: inference.py
+pinned: false
+---
 # 📧 EmailTriageEnv
 
 **An OpenEnv-compliant RL environment for real-world email triage.**

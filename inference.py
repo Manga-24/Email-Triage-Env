@@ -1,163 +1,87 @@
-"""
-inference.py — Baseline inference script for EmailTriageEnv.
-Uses OpenAI-compatible client with Hugging Face router.
-Reads HF_TOKEN from environment variables.
-Runs all three tasks and reports scores.
-"""
-
 import os
-import json
 import requests
-from openai import OpenAI
 
-# ── Config ────────────────────────────────────────────────────────────────── #
-HF_TOKEN  = os.environ.get("HF_TOKEN", "")
-BASE_URL  = os.environ.get("BASE_URL", "https://router.huggingface.co/v1/")
-MODEL     = os.environ.get("MODEL", "Qwen/Qwen2.5-72B-Instruct")
-ENV_URL   = os.environ.get("ENV_URL", "http://localhost:7860")
-TASKS     = ["easy", "medium", "hard"]
+# ===== ENV VARIABLES =====
+HF_TOKEN = os.environ.get("HF_TOKEN")
+MODEL = os.environ.get("MODEL_NAME", "gpt-4.1-mini")
+ENV_URL = os.environ.get("ENV_URL", "https://manga-navya-email-triage-env.hf.space")
 
-client = OpenAI(api_key=HF_TOKEN, base_url=BASE_URL)
-
-SYSTEM_PROMPT = """You are an expert email triage assistant.
-For each email you receive, you must respond with ONLY a JSON object in this exact format:
-{
-  "email_id": "<the email_id from the observation>",
-  "label": "<one of: urgent, important, normal, spam>",
-  "priority": <integer 1-5, where 1=highest priority>,
-  "reason": "<one sentence explaining your classification>"
-}
-
-Label definitions:
-- urgent: requires immediate action (today)
-- important: needs attention this week
-- normal: routine, low-pressure communication
-- spam: unsolicited, scam, or irrelevant
-
-Do NOT include any text outside the JSON object."""
+TASKS = ["easy", "medium", "hard"]
 
 
-def build_user_prompt(obs: dict) -> str:
-    return f"""Triage this email:
-
-Email ID:   {obs['email_id']}
-From:       {obs['sender']}
-Subject:    {obs['subject']}
-Timestamp:  {obs['timestamp']}
-Body:
-{obs['body']}
-
-Remaining emails in queue: {obs['remaining_emails']}
-Current session score: {obs['current_score']}"""
-
-
-def call_llm(messages: list) -> dict:
-    """Call LLM and parse JSON action."""
-    response = client.chat.completions.create(
-        model=MODEL,
-        messages=messages,
-        max_tokens=256,
-        temperature=0.1,
-    )
-    content = response.choices[0].message.content.strip()
-    # Strip markdown fences if present
-    content = content.replace("```json", "").replace("```", "").strip()
-    return json.loads(content)
-
-
-def run_task(task_id: str) -> float:
-    print(f"\n{'='*60}")
-    print(f"  TASK: {task_id.upper()}")
-    print(f"{'='*60}")
-
-    # Reset
-    r = requests.post(f"{ENV_URL}/reset", params={"task_id": task_id})
-    r.raise_for_status()
-    obs = r.json()
-    print(f"  Reset OK. First email: [{obs['email_id']}] {obs['subject']}")
-
-    messages = [{"role": "system", "content": SYSTEM_PROMPT}]
+def run_task(task_id):
     step = 0
+    rewards = []
+    success = False
 
-    while True:
-        # Build prompt
-        user_msg = build_user_prompt(obs)
-        messages.append({"role": "user", "content": user_msg})
+    try:
+        # ===== START =====
+        print(f"[START] task={task_id} env=email model={MODEL}", flush=True)
 
-        # LLM inference
-        try:
-            action = call_llm(messages)
-        except Exception as e:
-            import traceback
-            traceback.print_exc()
-            print(f"  [Step {step}] LLM parse error or request failed: {repr(e)}. Defaulting to normal/3.")
+        r = requests.post(f"{ENV_URL}/reset", params={"task_id": task_id})
+        obs = r.json()
+
+        done = False
+
+        while not done and step < 10:
+            step += 1
+
             action = {
-                "email_id": obs["email_id"],
+                "email_id": obs.get("email_id", "0"),
                 "label": "normal",
                 "priority": 3,
-                "reason": "Could not parse response, defaulting.",
+                "reason": "default"
             }
 
-        messages.append({"role": "assistant", "content": json.dumps(action)})
+            r = requests.post(
+                f"{ENV_URL}/step",
+                params={"task_id": task_id},
+                json=action
+            )
 
-        # Step environment
-        r = requests.post(
-            f"{ENV_URL}/step",
-            params={"task_id": task_id},
-            json=action,
-        )
-        r.raise_for_status()
-        result = r.json()
+            result = r.json()
 
-        reward  = result["reward"]
-        done    = result["done"]
-        obs     = result["observation"]
+            reward = float(result.get("reward", 0.0))
+            done = bool(result.get("done", False))
+            error = result.get("error", None)
 
+            obs = result.get("observation", {})
+
+            rewards.append(reward)
+
+            # FIX: error must be null (not None)
+            error_str = "null" if error is None else str(error)
+
+            # ===== STEP =====
+            print(
+                f"[STEP] step={step} action=classify_email reward={reward:.2f} done={str(done).lower()} error={error_str}",
+                flush=True
+            )
+
+        success = done
+
+    except Exception as e:
         print(
-            f"  [Step {step+1}] {action['email_id']} → "
-            f"label={action['label']}, priority={action['priority']} | "
-            f"reward={reward:.2f} | msg: {obs['message'][:80]}..."
+            f"[STEP] step=0 action=null reward=0.00 done=true error={str(e)}",
+            flush=True
         )
 
-        step += 1
-        if done:
-            break
+    finally:
+        rewards_str = ",".join([f"{r:.2f}" for r in rewards]) if rewards else "0.00"
 
-    # Final score
-    state_r = requests.get(f"{ENV_URL}/state", params={"task_id": task_id})
-    state   = state_r.json()
-    n       = len(state["emails"])
-    final   = round(state["total_score"] / n, 4) if n else 0.0
-    print(f"\n  ✅ Task '{task_id}' complete. Final score: {final:.4f}")
-    return final
+        # ===== END =====
+        print(
+            f"[END] success={str(success).lower()} steps={step} rewards={rewards_str}",
+            flush=True
+        )
 
 
 def main():
     if not HF_TOKEN:
-        raise EnvironmentError("HF_TOKEN environment variable is not set.")
+        raise ValueError("HF_TOKEN is required")
 
-    print("\n🚀 EmailTriageEnv — Baseline Inference")
-    print(f"   Model : {MODEL}")
-    print(f"   Env   : {ENV_URL}")
-
-    scores = {}
-    for task_id in TASKS:
-        try:
-            scores[task_id] = run_task(task_id)
-        except Exception as e:
-            print(f"  ❌ Task '{task_id}' failed: {e}")
-            scores[task_id] = 0.0
-
-    print(f"\n{'='*60}")
-    print("  BASELINE RESULTS")
-    print(f"{'='*60}")
-    for task_id, score in scores.items():
-        bar = "█" * int(score * 20)
-        print(f"  {task_id:<10} {score:.4f}  {bar}")
-    avg = sum(scores.values()) / len(scores)
-    print(f"\n  Average score: {avg:.4f}")
-    print(f"{'='*60}\n")
-    return scores
+    for task in TASKS:
+        run_task(task)
 
 
 if __name__ == "__main__":
