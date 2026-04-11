@@ -2,22 +2,20 @@ import os
 import requests
 from openai import OpenAI
 
-# ===== ENV VARIABLES =====
-API_BASE_URL = os.getenv("API_BASE_URL", "https://api.openai.com/v1")
 MODEL_NAME = os.getenv("MODEL_NAME", "gpt-4.1-mini")
-HF_TOKEN = os.getenv("HF_TOKEN")
-
 ENV_URL = "https://manga-navya-email-triage-env.hf.space"
 
 client = None
 
-# ===== SAFE CLIENT INITIALIZATION =====
+# ===== SAFE CLIENT INIT (REQUIRED FOR PROXY) =====
 try:
-    if HF_TOKEN:
-        client = OpenAI(
-            base_url=API_BASE_URL,
-            api_key=HF_TOKEN
-        )
+    API_BASE_URL = os.environ["API_BASE_URL"]
+    API_KEY = os.environ["API_KEY"]
+
+    client = OpenAI(
+        base_url=API_BASE_URL,
+        api_key=API_KEY
+    )
 except Exception:
     client = None
 
@@ -31,7 +29,7 @@ def run_task(task_name):
         # ===== START =====
         print(f"[START] task={task_name} env=email model={MODEL_NAME}", flush=True)
 
-        # RESET ENV
+        # ===== RESET =====
         try:
             res = requests.get(f"{ENV_URL}/reset", params={"task_id": task_name}, timeout=5)
             data = res.json()
@@ -44,7 +42,7 @@ def run_task(task_name):
         while not done and step < 5:
             step += 1
 
-            # ===== SAFE LLM CALL =====
+            # ===== LLM CALL (MANDATORY FOR PROXY CHECK) =====
             try:
                 if client:
                     response = client.chat.completions.create(
@@ -57,7 +55,7 @@ def run_task(task_name):
             except Exception:
                 action = "classify_email"
 
-            # ===== ENV STEP =====
+            # ===== STEP =====
             try:
                 res = requests.get(
                     f"{ENV_URL}/step",
@@ -86,10 +84,7 @@ def run_task(task_name):
         success = done
 
     except Exception as e:
-        print(
-            f"[STEP] step=0 action=null reward=0.00 done=true error={str(e)}",
-            flush=True
-        )
+        print(f"[STEP] step=0 action=null reward=0.00 done=true error={str(e)}", flush=True)
 
     finally:
         rewards_str = ",".join(rewards) if rewards else "0.00"
