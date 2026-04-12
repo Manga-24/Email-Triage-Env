@@ -5,11 +5,12 @@ from openai import OpenAI
 # ===== ENV VARIABLES (SAFE FOR ALL ENVIRONMENTS) =====
 API_BASE_URL = os.environ.get("API_BASE_URL", "https://api.openai.com/v1")
 API_KEY = os.environ.get("API_KEY")
-MODEL_NAME = os.getenv("MODEL_NAME", "gpt-3.5-turbo")
+MODEL_NAME = os.environ.get("MODEL_NAME") or "gpt-3.5-turbo"
 
-ENV_URL = "https://manga-navya-email-triage-env.hf.space"
+# IMPORTANT: use localhost (HF container internal communication)
+ENV_URL = "http://localhost:7860"
 
-# ===== OPENAI CLIENT (SAFE INIT) =====
+# ===== OPENAI CLIENT =====
 client = None
 if API_KEY:
     try:
@@ -23,7 +24,7 @@ if API_KEY:
 
 def get_action():
     """
-    Always attempt LLM call if possible (for proxy detection)
+    Always attempt LLM call (required for proxy validation)
     """
     if client:
         try:
@@ -44,6 +45,17 @@ def get_action():
     return "classify_email"
 
 
+def safe_request(url, params):
+    """
+    Safe HTTP request wrapper
+    """
+    try:
+        res = requests.get(url, params=params, timeout=10)
+        return res.json()
+    except Exception as e:
+        return {"error": str(e), "reward": 0.0, "done": True}
+
+
 def run_task(task_name):
     step = 0
     rewards = []
@@ -54,17 +66,8 @@ def run_task(task_name):
 
     try:
         # RESET
-        try:
-            res = requests.get(
-                f"{ENV_URL}/reset",
-                params={"task_id": task_name},
-                timeout=5
-            )
-            data = res.json()
-            done = False
-        except Exception as e:
-            print(f"[STEP] step=0 action=null reward=0.00 done=true error={str(e)}", flush=True)
-            return
+        data = safe_request(f"{ENV_URL}/reset", {"task_id": task_name})
+        done = False
 
         while not done and step < 5:
             step += 1
@@ -72,29 +75,21 @@ def run_task(task_name):
             # ===== GET ACTION =====
             action = get_action()
 
-            # ===== ENV STEP =====
-            try:
-                res = requests.get(
-                    f"{ENV_URL}/step",
-                    params={"task_id": task_name, "action": action},
-                    timeout=5
-                )
-                data = res.json()
+            # ===== STEP =====
+            data = safe_request(
+                f"{ENV_URL}/step",
+                {"task_id": task_name, "action": action}
+            )
 
-                reward = float(data.get("reward", 0.0))
-                done = bool(data.get("done", False))
-                error = data.get("error", None)
-
-            except Exception as e:
-                reward = 0.00
-                done = True
-                error = str(e)
+            reward = float(data.get("reward", 0.0))
+            done = bool(data.get("done", False))
+            error = data.get("error", None)
 
             rewards.append(f"{reward:.2f}")
 
-            # ===== STEP OUTPUT =====
             print(
-                f"[STEP] step={step} action={action} reward={reward:.2f} done={str(done).lower()} error={error}",
+                f"[STEP] step={step} action={action} reward={reward:.2f} "
+                f"done={str(done).lower()} error={error}",
                 flush=True
             )
 
