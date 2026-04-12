@@ -5,8 +5,8 @@ WORKDIR /app
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# COPY EVERYTHING (IMPORTANT)
 COPY . .
 
-# RUN INFERENCE
-CMD ["python", "inference.py"]
+EXPOSE 7860
+
+CMD python server.py & sleep 5 && python inference.py

@@ -1,7 +1,5 @@
 from fastapi import FastAPI
 import uvicorn
-
-# import your existing FastAPI app from server.py
 from server import app as main_app
 
 app = main_app
