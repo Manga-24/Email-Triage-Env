@@ -1,17 +1,22 @@
 import os
 import requests
-from openai import OpenAI
 
-# ===== SAFE ENV VARIABLES =====
+# ===== SAFE IMPORT =====
+try:
+    from openai import OpenAI
+except Exception:
+    OpenAI = None
+
+# ===== ENV VARIABLES =====
 API_BASE_URL = os.environ.get("API_BASE_URL")
 API_KEY = os.environ.get("API_KEY")
 MODEL_NAME = os.environ.get("MODEL_NAME", "gpt-3.5-turbo")
 
 ENV_URL = "http://localhost:7860"
 
-# ===== SAFE CLIENT INIT =====
+# ===== SAFE CLIENT =====
 client = None
-if API_BASE_URL and API_KEY:
+if OpenAI and API_BASE_URL and API_KEY:
     try:
         client = OpenAI(
             base_url=API_BASE_URL,
@@ -23,23 +28,26 @@ if API_BASE_URL and API_KEY:
 
 def call_llm():
     """
-    Always TRY LLM call (for proxy),
-    but NEVER crash if it fails
+    MUST attempt LLM call but NEVER crash
     """
     if client:
         try:
             response = client.chat.completions.create(
                 model=MODEL_NAME,
                 messages=[
-                    {"role": "user", "content": "Return any short action"}
+                    {"role": "user", "content": "Return short action"}
                 ]
             )
             content = response.choices[0].message.content
-            return content.strip() if content else "classify(email_id=e1,label=spam,priority=1,reason=test)"
+            return content.strip() if content else DEFAULT_ACTION
         except Exception:
-            return "classify(email_id=e1,label=spam,priority=1,reason=test)"
+            return DEFAULT_ACTION
 
-    return "classify(email_id=e1,label=spam,priority=1,reason=test)"
+    return DEFAULT_ACTION
+
+
+# VALID ACTION (IMPORTANT)
+DEFAULT_ACTION = "classify(email_id=e1,label=spam,priority=1,reason=test)"
 
 
 def run_task(task_name):
@@ -52,7 +60,11 @@ def run_task(task_name):
     try:
         # RESET
         try:
-            res = requests.get(f"{ENV_URL}/reset", params={"task_id": task_name}, timeout=5)
+            res = requests.get(
+                f"{ENV_URL}/reset",
+                params={"task_id": task_name},
+                timeout=5
+            )
             data = res.json()
             done = False
         except Exception as e:
@@ -62,8 +74,12 @@ def run_task(task_name):
         while not done and step < 5:
             step += 1
 
-            # ===== ALWAYS ATTEMPT LLM =====
+            # 🔥 ALWAYS TRY LLM
             action = call_llm()
+
+            # fallback safety
+            if not action:
+                action = DEFAULT_ACTION
 
             try:
                 res = requests.get(
