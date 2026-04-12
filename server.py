@@ -1,23 +1,13 @@
-"""
-FastAPI server for EmailTriageEnv
-OpenEnv compliant (POST + JSON body supported)
-"""
-
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import FastAPI, HTTPException, Query, Body
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi.responses import RedirectResponse
 from pydantic import BaseModel
 import uvicorn
 
 from models import Action
 from env import EmailTriageEnv
 
-# ===== APP SETUP =====
-app = FastAPI(
-    title="EmailTriageEnv",
-    description="OpenEnv-compliant RL environment for email triage.",
-    version="1.0.0",
-)
+app = FastAPI()
 
 app.add_middleware(
     CORSMiddleware,
@@ -26,20 +16,16 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# ===== ENV STORAGE =====
-_envs: dict[str, EmailTriageEnv] = {}
+_envs = {}
 
 
-def get_env(task_id: str) -> EmailTriageEnv:
+def get_env(task_id: str):
     if task_id not in _envs:
-        try:
-            _envs[task_id] = EmailTriageEnv(task_id=task_id)
-        except ValueError as e:
-            raise HTTPException(status_code=400, detail=str(e))
+        _envs[task_id] = EmailTriageEnv(task_id=task_id)
     return _envs[task_id]
 
 
-# ===== REQUEST MODELS (IMPORTANT FIX) =====
+# ===== REQUEST MODELS =====
 class ResetRequest(BaseModel):
     task_id: str = "easy"
 
@@ -55,33 +41,32 @@ def root():
     return RedirectResponse(url="/health")
 
 
-# ===== HEALTH =====
 @app.get("/health")
 def health():
-    return {"status": "ok", "env": "EmailTriageEnv"}
+    return {"status": "ok"}
 
 
-# ===== RESET (POST REQUIRED FOR OPENENV) =====
+# ===== RESET (CRITICAL FIX) =====
 @app.post("/reset")
-def reset_post(req: ResetRequest):
-    env = get_env(req.task_id)
-    obs = env.reset()
-    return obs.model_dump()
+def reset(req: ResetRequest | None = Body(default=None)):
+    task_id = "easy"
+    if req and req.task_id:
+        task_id = req.task_id
 
-
-# ===== OPTIONAL GET RESET (FOR DEBUG) =====
-@app.get("/reset")
-def reset_get(task_id: str = Query(default="easy")):
     env = get_env(task_id)
     obs = env.reset()
     return obs.model_dump()
 
 
-# ===== STEP (POST REQUIRED FOR OPENENV) =====
+# ===== STEP (CRITICAL FIX) =====
 @app.post("/step")
-def step_post(req: StepRequest):
+def step(req: StepRequest | None = Body(default=None)):
+    if req is None:
+        raise HTTPException(status_code=400, detail="Missing body")
+
     env = get_env(req.task_id)
     obs, reward, done, info = env.step(req.action)
+
     return {
         "observation": obs.model_dump(),
         "reward": reward,
@@ -90,7 +75,14 @@ def step_post(req: StepRequest):
     }
 
 
-# ===== OPTIONAL GET STEP (FOR DEBUG) =====
+# ===== OPTIONAL GET (for debugging only) =====
+@app.get("/reset")
+def reset_get(task_id: str = Query(default="easy")):
+    env = get_env(task_id)
+    obs = env.reset()
+    return obs.model_dump()
+
+
 @app.get("/step")
 def step_get(
     task_id: str = Query(default="easy"),
@@ -118,13 +110,11 @@ def step_get(
     }
 
 
-# ===== STATE =====
 @app.get("/state")
 def state(task_id: str = Query(default="easy")):
     env = get_env(task_id)
     return env.state().model_dump()
 
 
-# ===== MAIN =====
 if __name__ == "__main__":
-    uvicorn.run("server:app", host="0.0.0.0", port=7860, reload=False)
+    uvicorn.run("server:app", host="0.0.0.0", port=7860)
