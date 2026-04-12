@@ -5,8 +5,8 @@ from openai import OpenAI
 # ===== ENV VARIABLES (SAFE FOR ALL ENVIRONMENTS) =====
 API_BASE_URL = os.environ.get("API_BASE_URL", "https://api.openai.com/v1")
 API_KEY = os.environ.get("API_KEY")
-MODEL_NAME = os.environ.get("MODEL_NAME") or "gpt-3.5-turbo"
 
+MODEL_NAME = "gpt-3.5-turbo"
 # IMPORTANT: use localhost (HF container internal communication)
 ENV_URL = "http://localhost:7860"
 
@@ -23,26 +23,23 @@ if API_KEY:
 
 
 def get_action():
-    """
-    Always attempt LLM call (required for proxy validation)
-    """
     if client:
         try:
             response = client.chat.completions.create(
                 model=MODEL_NAME,
                 messages=[{
                     "role": "user",
-                    "content": "Choose one action: classify_email, mark_spam, mark_important"
+                    "content": "Return an action like classify(email_id=1,label=spam)"
                 }]
             )
 
             content = response.choices[0].message.content
-            return content.strip() if content else "classify_email"
+            return content.strip() if content else "classify(email_id=1,label=spam)"
 
         except Exception:
-            return "classify_email"
+            return "classify(email_id=1,label=spam)"
 
-    return "classify_email"
+    return "classify(email_id=1,label=spam)"
 
 
 def safe_request(url, params):
