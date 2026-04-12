@@ -9,4 +9,4 @@ COPY . .
 
 EXPOSE 7860
 
-CMD python server.py & sleep 5 && python inference.py
+CMD ["python", "server.py"]
